@@ -1,0 +1,89 @@
+<UserControl x:Class="OctoConverter.Views.ImageTab"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:OctoConverter.Controls"
+             Loaded="Tab_Loaded">
+    <Grid Margin="0,12,0,0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <controls:FileListControl x:Name="FileList" Grid.Row="0"/>
+
+        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,10,0,0">
+            <StackPanel>
+                <TextBlock Text="변환 옵션" Style="{StaticResource SectionTitle}"/>
+                <WrapPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,22,6">
+                        <TextBlock Text="출력 형식" Style="{StaticResource FieldLabel}"/>
+                        <ComboBox x:Name="FormatBox" Width="100" SelectedIndex="0" SelectionChanged="Option_Changed">
+                            <ComboBoxItem Content="PNG" Tag=".png"/>
+                            <ComboBoxItem Content="JPEG" Tag=".jpg"/>
+                            <ComboBoxItem Content="WebP" Tag=".webp"/>
+                            <ComboBoxItem Content="AVIF" Tag=".avif"/>
+                            <ComboBoxItem Content="BMP" Tag=".bmp"/>
+                            <ComboBoxItem Content="GIF" Tag=".gif"/>
+                            <ComboBoxItem Content="TIFF" Tag=".tiff"/>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <StackPanel x:Name="QualityPanel" Orientation="Horizontal" Margin="0,0,22,6">
+                        <TextBlock Text="품질" Style="{StaticResource FieldLabel}"/>
+                        <Slider x:Name="QualitySlider" Width="130" Minimum="10" Maximum="100" Value="90"
+                                TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center"
+                                ValueChanged="Option_Changed"/>
+                        <TextBlock Text="{Binding Value, ElementName=QualitySlider, StringFormat={}{0:0}}"
+                                   VerticalAlignment="Center" Margin="6,0,0,0" Width="26"
+                                   Foreground="{StaticResource TextBrush}"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,22,6">
+                        <TextBlock Text="크기" Style="{StaticResource FieldLabel}"/>
+                        <ComboBox x:Name="ResizeBox" Width="118" SelectedIndex="0" SelectionChanged="Option_Changed">
+                            <ComboBoxItem Content="원본 유지"/>
+                            <ComboBoxItem Content="비율(%)"/>
+                            <ComboBoxItem Content="가로 기준(px)"/>
+                            <ComboBoxItem Content="세로 기준(px)"/>
+                            <ComboBoxItem Content="정확한 크기"/>
+                        </ComboBox>
+                        <TextBox x:Name="ResizeW" Width="56" Margin="6,0,0,0" Text="50"
+                                 TextChanged="Option_Changed" Visibility="Collapsed"/>
+                        <TextBlock x:Name="ResizeX" Text="×" Margin="4,0" VerticalAlignment="Center"
+                                   Visibility="Collapsed" Foreground="{StaticResource TextSecondaryBrush}"/>
+                        <TextBox x:Name="ResizeH" Width="56" Text="0"
+                                 TextChanged="Option_Changed" Visibility="Collapsed"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <CheckBox x:Name="TargetSizeCheck" Content="목표 용량"
+                                  Checked="Option_Changed" Unchecked="Option_Changed"/>
+                        <TextBox x:Name="TargetSizeBox" Width="56" Margin="6,0,4,0" Text="500"
+                                 TextChanged="Option_Changed"/>
+                        <ComboBox x:Name="TargetUnitBox" Width="58" SelectedIndex="0" SelectionChanged="Option_Changed">
+                            <ComboBoxItem Content="KB"/>
+                            <ComboBoxItem Content="MB"/>
+                        </ComboBox>
+                        <TextBlock Text="이하로 품질 자동 조절 (JPEG·WebP·AVIF)" Style="{StaticResource FieldLabel}"
+                                   Margin="8,0,0,0"/>
+                    </StackPanel>
+                </WrapPanel>
+            </StackPanel>
+        </Border>
+
+        <controls:OutputLocationControl x:Name="Output" Grid.Row="2" Margin="0,10,0,0"/>
+
+        <DockPanel Grid.Row="3" Margin="0,10,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="CancelBtn" Content="중지" Visibility="Collapsed"
+                        Click="Cancel_Click" Margin="0,0,8,0"/>
+                <Button x:Name="ConvertBtn" Content="변환 시작" Style="{StaticResource PrimaryButton}"
+                        Click="Convert_Click"/>
+            </StackPanel>
+            <TextBlock x:Name="EstimateText" VerticalAlignment="Center"
+                       Foreground="{StaticResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+        </DockPanel>
+    </Grid>
+</UserControl>

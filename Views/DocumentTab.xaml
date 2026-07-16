@@ -1,0 +1,62 @@
+<UserControl x:Class="OctoConverter.Views.DocumentTab"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:OctoConverter.Controls"
+             Loaded="Tab_Loaded">
+    <Grid Margin="0,12,0,0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <controls:FileListControl x:Name="FileList" Grid.Row="0"/>
+
+        <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,10,0,0">
+            <StackPanel>
+                <DockPanel>
+                    <TextBlock Text="PDF 변환 옵션" Style="{StaticResource SectionTitle}"/>
+                    <TextBlock x:Name="EngineText" HorizontalAlignment="Right"
+                               Foreground="{StaticResource TextSecondaryBrush}" FontSize="11"/>
+                </DockPanel>
+                <WrapPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,0,22,6">
+                        <TextBlock Text="이미지 페이지 크기" Style="{StaticResource FieldLabel}"/>
+                        <ComboBox x:Name="PageModeBox" Width="140" SelectedIndex="0">
+                            <ComboBoxItem Content="이미지 크기 그대로"/>
+                            <ComboBoxItem Content="A4 세로"/>
+                            <ComboBoxItem Content="A4 가로"/>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,22,6">
+                        <TextBlock Text="이미지 품질" Style="{StaticResource FieldLabel}"/>
+                        <Slider x:Name="QualitySlider" Width="120" Minimum="30" Maximum="100" Value="90"
+                                TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding Value, ElementName=QualitySlider, StringFormat={}{0:0}}"
+                                   VerticalAlignment="Center" Margin="6,0,0,0" Width="26"
+                                   Foreground="{StaticResource TextBrush}"/>
+                    </StackPanel>
+
+                    <CheckBox x:Name="MergeCheck" Content="이미지 여러 장을 하나의 PDF로 합치기" Margin="0,0,0,6"/>
+                </WrapPanel>
+                <TextBlock Margin="0,4,0,0" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11"
+                           Text="Word·Excel·PowerPoint 문서는 설치된 Microsoft Office(없으면 LibreOffice)로 변환합니다. 이미지는 자체 엔진으로 바로 변환됩니다."/>
+            </StackPanel>
+        </Border>
+
+        <controls:OutputLocationControl x:Name="Output" Grid.Row="2" Margin="0,10,0,0"/>
+
+        <DockPanel Grid.Row="3" Margin="0,10,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button x:Name="CancelBtn" Content="중지" Visibility="Collapsed"
+                        Click="Cancel_Click" Margin="0,0,8,0"/>
+                <Button x:Name="ConvertBtn" Content="PDF로 변환" Style="{StaticResource PrimaryButton}"
+                        Click="Convert_Click"/>
+            </StackPanel>
+            <TextBlock x:Name="EstimateText" VerticalAlignment="Center"
+                       Foreground="{StaticResource TextSecondaryBrush}" TextTrimming="CharacterEllipsis"/>
+        </DockPanel>
+    </Grid>
+</UserControl>

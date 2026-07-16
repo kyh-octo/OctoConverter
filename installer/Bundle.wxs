@@ -1,0 +1,28 @@
+<!-- OctoConverter setup.exe (Burn 부트스트래퍼) — 내부에 MSI를 담아 배포하기 쉬운 단일 exe로 만든다.
+     빌드: installer\build-installer.ps1 실행 (MsiPath 전처리 변수 필요) -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+
+  <?ifndef ProjectRoot ?>
+    <?define ProjectRoot = ".." ?>
+  <?endif ?>
+  <?ifndef MsiPath ?>
+    <?define MsiPath = "output\OctoConverterSetup-1.0.0.msi" ?>
+  <?endif ?>
+
+  <Bundle Name="OctoConverter"
+          Manufacturer="OctoBrain Softworks"
+          Version="!(bind.packageVersion.MainMsi)"
+          UpgradeCode="7A3E43F5-3F82-4CB2-BD48-6C40F2E1B5D9"
+          IconSourceFile="$(var.ProjectRoot)\Assets\OctoConverter.ico">
+
+    <BootstrapperApplication>
+      <!-- LicenseUrl=""은 라이선스 페이지 없이 설치 버튼만 보여준다 -->
+      <bal:WixStandardBootstrapperApplication Theme="hyperlinkLicense" LicenseUrl=""/>
+    </BootstrapperApplication>
+
+    <Chain>
+      <MsiPackage Id="MainMsi" SourceFile="$(var.MsiPath)"/>
+    </Chain>
+  </Bundle>
+</Wix>

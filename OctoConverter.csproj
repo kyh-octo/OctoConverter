@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>OctoConverter</RootNamespace>
+    <AssemblyName>OctoConverter</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\OctoConverter.ico</ApplicationIcon>
+    <!-- 한글 문자열이 포함된 소스는 항상 UTF-8로 컴파일 -->
+    <CodePage>65001</CodePage>
+    <!-- 게시 시 미리 컴파일(ReadyToRun)로 시작 속도 단축 -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <!-- 초기 WinForms 템플릿 잔재는 컴파일에서 제외 (직접 삭제해도 무방) -->
+  <ItemGroup>
+    <Compile Remove="Form1.cs;Form1.Designer.cs;Program.cs"/>
+    <None Include="Form1.cs;Form1.Designer.cs;Program.cs"/>
+  </ItemGroup>
+
+  <!-- 창 타이틀바·헤더 로고용 임베디드 리소스 -->
+  <ItemGroup>
+    <Resource Include="Assets\OctoConverter.ico"/>
+  </ItemGroup>
+
+</Project>

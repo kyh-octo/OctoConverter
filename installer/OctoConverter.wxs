@@ -1,0 +1,47 @@
+<!-- OctoConverter MSI 설치 프로그램 정의 (WiX v4+ 스키마)
+     빌드: installer\build-installer.ps1 실행
+     UpgradeCode는 제품 식별자이므로 절대 바꾸지 말 것 (버전 업그레이드 감지에 사용) -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <!-- ProjectRoot: 빌드 시 -d ProjectRoot=<프로젝트 폴더> 로 전달 (기본값: wxs 기준 상위 폴더) -->
+  <?ifndef ProjectRoot ?>
+    <?define ProjectRoot = ".." ?>
+  <?endif ?>
+
+  <Package Name="OctoConverter"
+           Manufacturer="OctoBrain Softworks"
+           Version="!(bind.FileVersion.MainExe)"
+           UpgradeCode="B6E869C8-490E-4FB9-8266-C231E69254FE"
+           Language="1042"
+           Codepage="949"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <SummaryInformation Description="OctoConverter - 만능 파일 변환기" Manufacturer="OctoBrain Softworks"/>
+
+    <!-- 같은 제품의 이전 버전은 자동 제거(업그레이드), 상위 버전이 있으면 설치 차단 -->
+    <MajorUpgrade DowngradeErrorMessage="더 높은 버전의 OctoConverter가 이미 설치되어 있습니다."/>
+    <MediaTemplate EmbedCab="yes"/>
+
+    <Icon Id="AppIcon.ico" SourceFile="$(var.ProjectRoot)\Assets\OctoConverter.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="AppIcon.ico"/>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="OctoConverter"/>
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppComponents" Directory="INSTALLFOLDER">
+      <Component Id="MainExeComponent">
+        <File Id="MainExe" Source="$(var.ProjectRoot)\bin\publish\win-x64\OctoConverter.exe" KeyPath="yes">
+          <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="OctoConverter"
+                    WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" Advertise="yes"/>
+          <Shortcut Id="DesktopShortcut" Directory="DesktopFolder" Name="OctoConverter"
+                    WorkingDirectory="INSTALLFOLDER" Icon="AppIcon.ico" Advertise="yes"/>
+        </File>
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="Main" Title="OctoConverter" Level="1">
+      <ComponentGroupRef Id="AppComponents"/>
+    </Feature>
+  </Package>
+</Wix>
