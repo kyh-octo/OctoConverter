@@ -40,7 +40,7 @@
                         Style="{StaticResource PrimaryButton}" Click="InstallFFmpeg_Click"/>
                 <TextBlock VerticalAlignment="Center" TextWrapping="Wrap"
                            Foreground="{StaticResource WarnTextBrush}" Margin="0,0,12,0"
-                           Text="동영상·음악·애니메이션 변환에는 FFmpeg이 필요합니다. 버튼 한 번으로 자동 설치됩니다. (이미지·아이콘 변환은 바로 사용 가능)"/>
+                           Text="동영상·음악·애니메이션 변환에는 FFmpeg이 필요합니다. 버튼 한 번으로 자동 설치됩니다. (이미지·아이콘 변환은 바로 사용 가능하지만, AVIF·HEIC의 투명 배경을 지키려면 FFmpeg이 필요합니다)"/>
             </DockPanel>
         </Border>
 
