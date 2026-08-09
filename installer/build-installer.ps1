@@ -17,7 +17,9 @@ dotnet publish (Join-Path $root "OctoConverter.csproj") `
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish 실패" }
 
 Write-Host "[2/3] MSI 빌드 중..." -ForegroundColor Cyan
-$version = (Get-Item (Join-Path $publishDir "OctoConverter.exe")).VersionInfo.FileVersion
+# FileVersion은 4자리(1.0.1.0)로 나오므로 파일명에는 제품 버전 3자리만 쓴다
+$fileVersion = (Get-Item (Join-Path $publishDir "OctoConverter.exe")).VersionInfo.FileVersion
+$version = ($fileVersion -split '\.')[0..2] -join '.'
 $outDir = Join-Path $PSScriptRoot "output"
 New-Item -ItemType Directory -Force $outDir | Out-Null
 $msi = Join-Path $outDir "OctoConverterSetup-$version.msi"
