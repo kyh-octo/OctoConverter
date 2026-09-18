@@ -4,7 +4,7 @@
 
 ## 다운로드
 
-[Releases](../../releases) 페이지에서 `OctoConverterSetup-<버전>.exe`를 받아 실행하면 됩니다.
+[Releases](../../releases) 페이지에서 `OctoConverter-Setup-<버전>.exe`를 받아 실행하면 됩니다.
 .NET 런타임이 내장되어 있어 별도 설치가 필요 없습니다. (Windows 10/11 x64)
 
 ## 탭 구성
@@ -67,27 +67,24 @@ OctoConverter/
 
 빌드: Visual Studio 2022(17.12+)에서 `OctoConverter.slnx` 열기 또는 `dotnet build`.
 
-## 설치 프로그램 (MSI)
+## 설치 파일 (Inno Setup)
 
-`installer\build-installer.ps1`을 실행하면 두 단계가 자동으로 진행됩니다:
+[Inno Setup 6](https://jrsoftware.org/isinfo.php)이 필요합니다 (`winget install -e --id JRSoftware.InnoSetup`).
 
-1. 자가 포함 단일 exe 게시 (.NET 런타임 포함 → 대상 PC에 별도 설치 불필요)
-2. WiX로 MSI 빌드 → `installer\output\OctoConverterSetup-<버전>.msi` (약 49MB)
-
-설치 시 `C:\Program Files\OctoConverter`에 설치되고 시작 메뉴·바탕화면 바로가기가 생성되며,
-"앱 및 기능"에서 제거할 수 있습니다. 같은 UpgradeCode를 쓰므로 새 버전 MSI를 설치하면
-이전 버전은 자동으로 교체됩니다 (버전은 csproj의 `<Version>`을 올리면 됨).
-
-빌드 결과물은 두 가지입니다:
-- `OctoConverterSetup-<버전>.exe` — MSI를 감싼 단일 설치 파일 (배포용 권장)
-- `OctoConverterSetup-<버전>.msi` — 조용한 설치(`msiexec /i ... /qn`)나 사내 배포용
-
-필요 도구:
+```powershell
+powershell -ExecutionPolicy Bypass -File installeruild-installer.ps1
 ```
-dotnet tool install --global wix --version 5.0.2
-wix extension add --global WixToolset.BootstrapperApplications.wixext/5.0.2
-```
-(WiX v7부터는 상용 조직에 OSMF 약관 동의가 필요하므로 v5 사용)
+
+1. self-contained 게시 (.NET 런타임 포함 → 대상 PC에 별도 설치 불필요)
+2. Inno Setup 컴파일 → `installer\output\OctoConverter-Setup-<버전>.exe` (버전은 csproj의 `<Version>`)
+
+관리자 권한 없이 사용자 단위로 설치되며(LocalAppData), 같은 AppId를 쓰므로 새 버전을 설치하면
+이전 버전 위에 그대로 업그레이드됩니다. v1.0.x 시절의 WiX MSI 설치본이 남아 있으면 설치 전에 자동으로 제거합니다.
+
+### 릴리즈 (원클릭)
+
+`release.bat`을 실행하면 Git 최신 커밋 기준으로 설치 파일 빌드 → GitHub 릴리스(태그 `v<버전>`) 생성 → octo-brain.com 배포 갱신까지 자동으로 진행됩니다.
+커밋되지 않은 로컬 변경은 릴리즈에 포함되지 않습니다. 옵션은 `installerelease.ps1` 머리말 참고.
 
 ## 라이선스
 

@@ -1,39 +1,60 @@
-# OctoConverter MSI 설치 프로그램 빌드 스크립트
-# 사용법: PowerShell에서 .\build-installer.ps1
-# 필요 도구: .NET SDK, WiX (dotnet tool install --global wix)
+﻿# OctoConverter 설치 파일 빌드 스크립트
+# 사용법: powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1 [-SkipWebsite]
+# 결과물: installer\output\OctoConverter-Setup-<버전>.exe
+# 빌드가 끝나면 update-website.ps1을 호출해 octo-brain.com 배포 섹션(웹사이트 릴리스 + store.html)을 자동 갱신한다.
+# -SkipWebsite 를 주면 웹사이트 갱신을 건너뛴다 (로컬 테스트 빌드용).
+# Git 최신 커밋 기준 원클릭 릴리즈(프로젝트 GitHub 릴리스 포함)는 release.bat / installer\release.ps1 을 사용한다.
+
+param(
+    [switch]$SkipWebsite,
+    [string]$CoAuthor = ""
+)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
-$publishDir = Join-Path $root "bin\publish\win-x64"
+$csproj = Join-Path $root "OctoConverter.csproj"
+$publishDir = Join-Path $root "bin\Release\Publish"
 
-Write-Host "[1/2] 자가 포함 단일 파일 게시 중..." -ForegroundColor Cyan
-dotnet publish (Join-Path $root "OctoConverter.csproj") `
-    -c Release -r win-x64 --self-contained true `
-    -p:PublishSingleFile=true `
-    -p:IncludeNativeLibrariesForSelfExtract=true `
-    -p:PublishReadyToRun=true `
-    -p:DebugType=none `
-    -o $publishDir -v m -nologo
-if ($LASTEXITCODE -ne 0) { throw "dotnet publish 실패" }
+# 1) csproj에서 버전 읽기
+$version = ([xml](Get-Content $csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+if (-not $version) { $version = "1.0.0" }
+$version = "$version".Trim()
+Write-Host "== OctoConverter v$version 설치 파일 빌드 ==" -ForegroundColor Cyan
 
-Write-Host "[2/3] MSI 빌드 중..." -ForegroundColor Cyan
-# FileVersion은 4자리(1.0.1.0)로 나오므로 파일명에는 제품 버전 3자리만 쓴다
-$fileVersion = (Get-Item (Join-Path $publishDir "OctoConverter.exe")).VersionInfo.FileVersion
-$version = ($fileVersion -split '\.')[0..2] -join '.'
-$outDir = Join-Path $PSScriptRoot "output"
-New-Item -ItemType Directory -Force $outDir | Out-Null
-$msi = Join-Path $outDir "OctoConverterSetup-$version.msi"
+# 2) 게시 (자체 포함 - 대상 PC에 .NET 설치 불필요)
+Write-Host "[1/2] dotnet publish..." -ForegroundColor Yellow
+if (Test-Path $publishDir) { Remove-Item -Recurse -Force $publishDir }
+dotnet publish $csproj -c Release -r win-x64 --self-contained true `
+    -p:PublishReadyToRun=true -p:DebugType=none -o $publishDir -v q -nologo
+if ($LASTEXITCODE -ne 0) { throw "게시 실패 (exit $LASTEXITCODE)" }
 
-wix build (Join-Path $PSScriptRoot "OctoConverter.wxs") -arch x64 -d "ProjectRoot=$root" -o $msi
-if ($LASTEXITCODE -ne 0) { throw "wix build 실패 (MSI)" }
+# 3) Inno Setup 컴파일
+$iscc = @(
+    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $iscc) { throw "Inno Setup 6을 찾을 수 없습니다. winget install -e --id JRSoftware.InnoSetup 으로 설치하세요." }
 
-Write-Host "[3/3] setup.exe 빌드 중..." -ForegroundColor Cyan
-$setupExe = Join-Path $outDir "OctoConverterSetup-$version.exe"
-wix build (Join-Path $PSScriptRoot "Bundle.wxs") `
-    -ext WixToolset.BootstrapperApplications.wixext `
-    -d "ProjectRoot=$root" -d "MsiPath=$msi" -o $setupExe
-if ($LASTEXITCODE -ne 0) { throw "wix build 실패 (Bundle)" }
+Write-Host "[2/2] Inno Setup 컴파일..." -ForegroundColor Yellow
+& $iscc "/DAppVersion=$version" (Join-Path $PSScriptRoot "OctoConverter.iss") | Select-Object -Last 3
+if ($LASTEXITCODE -ne 0) { throw "설치 파일 컴파일 실패 (exit $LASTEXITCODE)" }
 
-Write-Host "완료:" -ForegroundColor Green
-Write-Host "  $msi ($([math]::Round((Get-Item $msi).Length/1MB, 1)) MB)"
-Write-Host "  $setupExe ($([math]::Round((Get-Item $setupExe).Length/1MB, 1)) MB)  <- 배포용 권장"
+$setup = Join-Path $PSScriptRoot "output\OctoConverter-Setup-$version.exe"
+if (Test-Path $setup) {
+    $mb = [math]::Round((Get-Item $setup).Length / 1MB, 1)
+    Write-Host "완료: $setup ($mb MB)" -ForegroundColor Green
+} else {
+    throw "설치 파일이 생성되지 않았습니다."
+}
+
+# 4) octo-brain.com 배포 섹션 갱신 (실패해도 설치 파일 빌드 자체는 성공으로 둔다)
+if (-not $SkipWebsite) {
+    Write-Host "[3/3] octo-brain.com 배포 갱신..." -ForegroundColor Yellow
+    try {
+        & (Join-Path $PSScriptRoot "update-website.ps1") -AppName "OctoConverter" -Version $version -InstallerPath $setup -CoAuthor $CoAuthor
+    } catch {
+        Write-Host "경고: 웹사이트 갱신 실패 - $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "      수동 실행: powershell -ExecutionPolicy Bypass -File installer\update-website.ps1 -AppName OctoConverter -Version $version -InstallerPath `"$setup`"" -ForegroundColor Red
+    }
+}
