@@ -56,14 +56,17 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; 앱 내 자동 업데이트(/SILENT /AUTOUPDATE=1)로 설치된 경우, 설치가 끝나면 앱을 다시 실행한다
+Filename: "{app}\{#AppExeName}"; Flags: nowait; Check: IsAutoUpdate
 
 [UninstallRun]
 ; 제거 전에 실행 중인 앱 종료
 Filename: "{cmd}"; Parameters: "/C taskkill /F /IM {#AppExeName}"; Flags: runhidden; RunOnceId: "KillApp"
 
 [UninstallDelete]
-; 앱이 내려받은 FFmpeg 등 정리
+; 앱이 내려받은 FFmpeg, 설정 파일 정리
 Type: filesandordirs; Name: "{localappdata}\OctoConverter"
+Type: filesandordirs; Name: "{userappdata}\OctoConverter"
 
 [Code]
 { ============================================================================
@@ -75,6 +78,12 @@ Type: filesandordirs; Name: "{localappdata}\OctoConverter"
   ============================================================================ }
 const
   UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall';
+
+{ 앱 내 자동 업데이트(UpdateService)가 /AUTOUPDATE=1 매개변수로 실행했는지 }
+function IsAutoUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:AUTOUPDATE|0}') = '1';
+end;
 
 function IsOldOctoConverter(Root: Integer; const SubKey: String): Boolean;
 var

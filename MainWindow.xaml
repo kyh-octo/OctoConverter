@@ -17,8 +17,8 @@
         </Grid.RowDefinitions>
 
         <!-- 헤더 -->
-        <DockPanel Grid.Row="0" Margin="4,0,4,10">
-            <StackPanel Orientation="Horizontal">
+        <DockPanel Grid.Row="0" Margin="4,0,4,10" LastChildFill="False">
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
                 <Image Source="pack://application:,,,/Assets/OctoConverter.ico"
                        Width="26" Height="26" VerticalAlignment="Center" Margin="0,0,8,0"
                        RenderOptions.BitmapScalingMode="HighQuality"/>
@@ -27,8 +27,12 @@
                 <TextBlock Text="만능 파일 변환기" Foreground="{StaticResource TextSecondaryBrush}"
                            VerticalAlignment="Bottom" Margin="10,0,0,3"/>
             </StackPanel>
-            <TextBlock x:Name="FFmpegStatus" HorizontalAlignment="Right" VerticalAlignment="Center"
-                       Foreground="{StaticResource TextSecondaryBrush}"/>
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                <TextBlock x:Name="FFmpegStatus" VerticalAlignment="Center"
+                           Foreground="{StaticResource TextSecondaryBrush}"/>
+                <Button Content="⚙ 설정" Margin="14,0,0,0" Padding="10,4" Click="Settings_Click"
+                        ToolTip="설정 · 업데이트 확인"/>
+            </StackPanel>
         </DockPanel>
 
         <!-- FFmpeg 미설치 안내 배너 -->

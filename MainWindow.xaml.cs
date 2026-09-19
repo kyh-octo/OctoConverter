@@ -7,6 +7,8 @@ namespace OctoConverter;
 
 public partial class MainWindow : Window
 {
+    private readonly AppSettings _settings = AppSettings.Load();
+
     public MainWindow()
     {
         InitializeComponent();
@@ -17,6 +19,14 @@ public partial class MainWindow : Window
         EnsureTabContent();
         await Task.Run(FFmpegService.Locate);
         UpdateFFmpegStatus();
+
+        // 시작 시 자동 업데이트 확인 (설정에서 끌 수 있음)
+        _ = UpdatePrompt.RunStartupCheckAsync(_settings, () => this);
+    }
+
+    private void Settings_Click(object sender, RoutedEventArgs e)
+    {
+        new SettingsWindow(_settings) { Owner = this }.ShowDialog();
     }
 
     private void Tabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
