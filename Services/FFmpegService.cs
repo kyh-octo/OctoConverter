@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 
 namespace OctoConverter.Services;
 
@@ -20,22 +21,23 @@ public static class FFmpegService
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "OctoConverter", "ffmpeg");
 
-    private const string DownloadUrl =
-        "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip";
+    private const string GyanDownloadUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.zip";
+    private static readonly SemaphoreSlim DownloadLock = new(1, 1);
 
     public static void Locate()
     {
-        string? ffmpeg = null, ffprobe = null;
         foreach (var dir in CandidateDirs())
         {
             var f = Path.Combine(dir, "ffmpeg.exe");
             var p = Path.Combine(dir, "ffprobe.exe");
-            if (ffmpeg is null && File.Exists(f)) ffmpeg = f;
-            if (ffprobe is null && File.Exists(p)) ffprobe = p;
-            if (ffmpeg is not null && ffprobe is not null) break;
+            if (File.Exists(f) && File.Exists(p))
+            {
+                FFmpegPath = f;
+                FFprobePath = p;
+                return;
+            }
         }
-        FFmpegPath = ffmpeg;
-        FFprobePath = ffprobe;
+        FFmpegPath = FFprobePath = null;
     }
 
     private static IEnumerable<string> CandidateDirs()
@@ -53,54 +55,191 @@ public static class FFmpegService
         }
     }
 
-    /// <summary>BtbN 공식 빌드를 내려받아 ffmpeg.exe / ffprobe.exe만 추출한다.</summary>
+    /// <summary>Full FFmpeg 빌드를 내려받고 검증 후 원자적으로 설치한다.</summary>
     public static async Task DownloadAsync(IProgress<(double Percent, string Message)> progress, CancellationToken ct)
     {
-        Directory.CreateDirectory(ToolDir);
-        var zipPath = Path.Combine(ToolDir, "_download.zip");
+        await DownloadLock.WaitAsync(ct);
+        string staging = Path.Combine(Path.GetTempPath(), "OctoConverter-ffmpeg-" + Guid.NewGuid().ToString("N"));
         try
         {
-            using (var http = new HttpClient { Timeout = TimeSpan.FromMinutes(30) })
+            Directory.CreateDirectory(staging);
+            using var http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("OctoConverter");
+            progress.Report((0, "다운로드 서버를 찾는 중..."));
+            var candidates = await ResolveMirrorsAsync(http, ct);
+            Exception? lastError = null;
+            foreach (var (label, url) in candidates)
             {
-                progress.Report((0, "다운로드 준비 중..."));
-                using var resp = await http.GetAsync(DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct);
-                resp.EnsureSuccessStatusCode();
-                var total = resp.Content.Headers.ContentLength ?? -1;
-
-                await using var src = await resp.Content.ReadAsStreamAsync(ct);
-                await using var dst = File.Create(zipPath);
-                var buffer = new byte[1 << 16];
-                long done = 0;
-                int read;
-                while ((read = await src.ReadAsync(buffer, ct)) > 0)
+                ct.ThrowIfCancellationRequested();
+                string zipPath = Path.Combine(staging, Guid.NewGuid().ToString("N") + ".zip");
+                try
                 {
-                    await dst.WriteAsync(buffer.AsMemory(0, read), ct);
-                    done += read;
-                    progress.Report(total > 0
-                        ? (done * 90.0 / total, $"다운로드 중... {Formatters.Bytes(done)} / {Formatters.Bytes(total)}")
-                        : (45, $"다운로드 중... {Formatters.Bytes(done)}"));
+                    progress.Report((0, $"{label}에 연결하는 중..."));
+                    await DownloadFileAsync(http, url, zipPath, label, progress, ct);
+                    progress.Report((92, $"{label} 압축 검사 및 해제 중..."));
+                    string extracted = Path.Combine(staging, "extract-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(extracted);
+                    await Task.Run(() => ExtractPair(zipPath, extracted), ct);
+                    await ValidateExecutableAsync(Path.Combine(extracted, "ffmpeg.exe"), ct);
+                    await ValidateExecutableAsync(Path.Combine(extracted, "ffprobe.exe"), ct);
+                    ct.ThrowIfCancellationRequested();
+                    InstallPair(extracted, ToolDir, ct);
+                    Locate();
+                    if (!IsAvailable) throw new InvalidOperationException("설치한 FFmpeg 실행 파일 쌍을 찾지 못했습니다.");
+                    progress.Report((100, "설치 완료"));
+                    return;
                 }
-            }
-
-            progress.Report((92, "압축 해제 중..."));
-            using (var zip = ZipFile.OpenRead(zipPath))
-            {
-                foreach (var name in new[] { "ffmpeg.exe", "ffprobe.exe" })
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex)
                 {
-                    var entry = zip.Entries.FirstOrDefault(e =>
-                        e.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-                    if (entry is null)
-                        throw new InvalidOperationException($"압축 파일에서 {name}을(를) 찾지 못했습니다.");
-                    entry.ExtractToFile(Path.Combine(ToolDir, name), overwrite: true);
+                    lastError = ex;
+                    progress.Report((0, $"{label} 실패 ({ex.Message}) → 다음 서버 시도"));
                 }
+                finally { try { File.Delete(zipPath); } catch { } }
             }
-            progress.Report((100, "설치 완료"));
+            throw new InvalidOperationException("모든 다운로드 서버에서 실패했습니다.\n" + (lastError?.Message ?? ""), lastError);
         }
-        finally
+        finally { try { if (Directory.Exists(staging)) Directory.Delete(staging, true); } catch { } DownloadLock.Release(); }
+    }
+
+    private static async Task<List<(string Label, string Url)>> ResolveMirrorsAsync(HttpClient http, CancellationToken ct)
+    {
+        var list = new List<(string, string)>();
+        using var apiCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        apiCts.CancelAfter(TimeSpan.FromSeconds(15));
+        try
         {
-            try { if (File.Exists(zipPath)) File.Delete(zipPath); } catch { }
+            using var response = await http.GetAsync("https://api.github.com/repos/GyanD/codexffmpeg/releases/latest", HttpCompletionOption.ResponseHeadersRead, apiCts.Token);
+            if (response.IsSuccessStatusCode)
+            {
+                using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(apiCts.Token), cancellationToken: apiCts.Token);
+                foreach (var asset in doc.RootElement.GetProperty("assets").EnumerateArray())
+                {
+                    string name = asset.GetProperty("name").GetString() ?? "";
+                    if (name.EndsWith("-full_build.zip", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string? url = asset.GetProperty("browser_download_url").GetString();
+                        if (!string.IsNullOrWhiteSpace(url)) list.Add(("GitHub (gyan full 미러)", url));
+                        break;
+                    }
+                }
+            }
         }
-        Locate();
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch { /* API 실패/timeout이면 고정 후보로 진행 */ }
+        list.Add(("GitHub (BtbN)", "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"));
+        list.Add(("gyan.dev full", GyanDownloadUrl));
+        return list;
+    }
+
+    private static async Task DownloadFileAsync(HttpClient http, string url, string path, string label,
+        IProgress<(double Percent, string Message)> progress, CancellationToken ct)
+    {
+        using var headerCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        headerCts.CancelAfter(TimeSpan.FromSeconds(30));
+        HttpResponseMessage response;
+        try { response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, headerCts.Token); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new TimeoutException("30초 안에 다운로드 응답 헤더를 받지 못했습니다."); }
+        using (response)
+        {
+        response.EnsureSuccessStatusCode();
+        long total = response.Content.Headers.ContentLength ?? -1;
+        using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        streamCts.CancelAfter(TimeSpan.FromSeconds(30));
+        Stream src;
+        try { src = await response.Content.ReadAsStreamAsync(streamCts.Token); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new TimeoutException("30초 안에 다운로드 스트림을 열지 못했습니다."); }
+        await using (src)
+        {
+        await using var dst = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16, true);
+        var buffer = new byte[1 << 16]; long done = 0; var sw = Stopwatch.StartNew(); var lastReport = TimeSpan.Zero;
+        while (true)
+        {
+            using var idleCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            idleCts.CancelAfter(TimeSpan.FromSeconds(30));
+            int n;
+            try { n = await src.ReadAsync(buffer.AsMemory(), idleCts.Token); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new TimeoutException("30초 동안 다운로드 응답이 없습니다."); }
+            if (n == 0) break;
+            await dst.WriteAsync(buffer.AsMemory(0, n), ct); done += n;
+            if (sw.Elapsed - lastReport >= TimeSpan.FromMilliseconds(200))
+            {
+                lastReport = sw.Elapsed;
+                double speed = done / Math.Max(.001, sw.Elapsed.TotalSeconds) / 1048576.0;
+                string size = total > 0 ? $"{done / 1048576.0:0.0} / {total / 1048576.0:0.0} MB" : $"{done / 1048576.0:0.0} MB";
+                progress.Report((total > 0 ? Math.Min(90, done * 90.0 / total) : 45, $"{label} 다운로드 중... {size} ({speed:0.0} MB/s)"));
+            }
+        }
+        if (total >= 0 && done != total) throw new IOException($"다운로드 크기가 맞지 않습니다 (예상 {total}, 수신 {done} 바이트).");
+        }
+        }
+    }
+
+    private static void ExtractPair(string zipPath, string targetDir)
+    {
+        using var zip = ZipFile.OpenRead(zipPath);
+        foreach (string name in new[] { "ffmpeg.exe", "ffprobe.exe" })
+        {
+            var entry = zip.Entries.FirstOrDefault(e => e.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (entry is null) throw new InvalidDataException($"ZIP에서 {name}을(를) 찾지 못했습니다.");
+            entry.ExtractToFile(Path.Combine(targetDir, name));
+        }
+    }
+
+    private static async Task ValidateExecutableAsync(string path, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo(path, "-version") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        using var proc = Process.Start(psi) ?? throw new InvalidOperationException($"{Path.GetFileName(path)} 실행에 실패했습니다.");
+        var stdout = proc.StandardOutput.ReadToEndAsync(); var stderr = proc.StandardError.ReadToEndAsync();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct); timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        try { await proc.WaitForExitAsync(timeout.Token); }
+        catch
+        {
+            try { proc.Kill(true); } catch { }
+            try { await proc.WaitForExitAsync(CancellationToken.None); }
+            finally { try { await Task.WhenAll(stdout, stderr); } catch { } }
+            throw;
+        }
+        string output = await stdout + await stderr;
+        string expected = Path.GetFileName(path).Equals("ffprobe.exe", StringComparison.OrdinalIgnoreCase) ? "ffprobe version" : "ffmpeg version";
+        if (proc.ExitCode != 0 || !output.Contains(expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"{Path.GetFileName(path)} -version 검증에 실패했습니다.");
+    }
+
+    private static void InstallPair(string sourceDir, string destinationDir, CancellationToken ct)
+    {
+        Directory.CreateDirectory(destinationDir);
+        string backupDir = Path.Combine(Path.GetTempPath(), "OctoConverter-ffmpeg-backup-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(backupDir);
+        var names = new[] { "ffmpeg.exe", "ffprobe.exe" };
+        var backed = new List<string>(); var installed = new List<string>();
+        bool committed = false;
+        try
+        {
+            foreach (var name in names)
+            {
+                ct.ThrowIfCancellationRequested();
+                string dest = Path.Combine(destinationDir, name);
+                if (File.Exists(dest)) { File.Move(dest, Path.Combine(backupDir, name)); backed.Add(name); }
+            }
+            foreach (var name in names) { ct.ThrowIfCancellationRequested(); File.Move(Path.Combine(sourceDir, name), Path.Combine(destinationDir, name)); installed.Add(name); }
+            committed = true;
+        }
+        catch
+        {
+            foreach (var name in installed) try { File.Delete(Path.Combine(destinationDir, name)); } catch { }
+            var restoreErrors = new List<Exception>();
+            foreach (var name in backed)
+            {
+                try { File.Move(Path.Combine(backupDir, name), Path.Combine(destinationDir, name), true); }
+                catch (Exception ex) { restoreErrors.Add(ex); }
+            }
+            if (restoreErrors.Count > 0)
+                throw new AggregateException($"FFmpeg 설치에 실패했고 기존 파일 백업이 {backupDir}에 남아 있습니다.", restoreErrors);
+            try { Directory.Delete(backupDir, true); } catch { }
+            throw;
+        }
+        finally { if (committed) try { Directory.Delete(backupDir, true); } catch { } }
     }
 
     /// <summary>

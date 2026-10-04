@@ -39,7 +39,10 @@
                             <ComboBoxItem Content="12" Tag="12"/>
                             <ComboBoxItem Content="10" Tag="10"/>
                             <ComboBoxItem Content="8" Tag="8"/>
+                            <ComboBoxItem Content="직접 입력" Tag="custom"/>
                         </ComboBox>
+                        <TextBox x:Name="FpsCustomBox" Width="76" Margin="5,0,0,0" Text="29.97"
+                                 Visibility="Collapsed" TextChanged="Option_Changed"/>
                     </StackPanel>
 
                     <StackPanel Orientation="Horizontal" Margin="0,0,22,6">
@@ -52,7 +55,22 @@
                             <ComboBoxItem Content="480" Tag="480"/>
                             <ComboBoxItem Content="320" Tag="320"/>
                             <ComboBoxItem Content="240" Tag="240"/>
+                            <ComboBoxItem Content="직접 입력" Tag="custom"/>
                         </ComboBox>
+                        <TextBox x:Name="WidthCustomBox" Width="76" Margin="5,0,0,0" Text="480"
+                                 Visibility="Collapsed" TextChanged="Option_Changed"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,22,6">
+                        <TextBlock Text="크기 조절" Style="{StaticResource FieldLabel}"/>
+                        <ComboBox x:Name="ResizeModeBox" Width="100" SelectedIndex="0" SelectionChanged="Option_Changed">
+                            <ComboBoxItem Content="너비" Tag="width"/>
+                            <ComboBoxItem Content="비율 축소" Tag="scale"/>
+                        </ComboBox>
+                        <TextBox x:Name="ScalePercentBox" Width="58" Margin="5,0,0,0" Text="50"
+                                 Visibility="Collapsed" TextChanged="Option_Changed"/>
+                        <TextBlock Text="%" Margin="3,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"
+                                   x:Name="ScalePercentLabel"/>
                     </StackPanel>
 
                     <StackPanel x:Name="ColorsPanel" Orientation="Horizontal" Margin="0,0,22,6">
@@ -90,15 +108,16 @@
                                   Checked="Option_Changed" Unchecked="Option_Changed"/>
                         <TextBox x:Name="TargetSizeBox" Width="56" Margin="6,0,4,0" Text="5"
                                  TextChanged="Option_Changed"/>
-                        <ComboBox x:Name="TargetUnitBox" Width="58" SelectedIndex="1" SelectionChanged="Option_Changed">
+                        <ComboBox x:Name="TargetUnitBox" Width="58" SelectedIndex="1" SelectionChanged="Option_Changed"
+                                  ToolTip="KB = 1,000바이트, MB = 1,000,000바이트">
                             <ComboBoxItem Content="KB"/>
                             <ComboBoxItem Content="MB"/>
                         </ComboBox>
-                        <TextBlock Text="이하로 자동 조절" Style="{StaticResource FieldLabel}" Margin="8,0,0,0"/>
+                        <TextBlock Text="미만으로 자동 조절" Style="{StaticResource FieldLabel}" Margin="8,0,0,0"/>
                     </StackPanel>
                 </WrapPanel>
-                <TextBlock Margin="0,4,0,0" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11"
-                           Text="목표 용량 방식: GIF·APNG는 크기·프레임을 단계적으로 줄이고, WebP는 품질을 자동 탐색, MP4·WebM은 2-pass 인코딩으로 맞춥니다."/>
+                <TextBlock Margin="0,4,0,0" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11" TextWrapping="Wrap"
+                           Text="목표 용량(KB=1,000바이트, MB=1,000,000바이트) 미만: GIF·APNG는 크기·프레임을 단계적으로 줄이고, WebP는 품질을 자동 탐색, MP4·WebM은 2-pass 인코딩으로 맞춥니다."/>
             </StackPanel>
         </Border>
 

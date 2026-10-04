@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Globalization;
 using OctoConverter.Models;
 using OctoConverter.Services;
 
@@ -52,42 +53,139 @@ public partial class AnimationTab : UserControl
         long? target = null;
         if (TargetSizeCheck.IsChecked == true)
         {
-            if (!double.TryParse(TargetSizeBox.Text, out var t) || t <= 0)
+            if (!TryParseDecimal(TargetSizeBox.Text, out var t) || t <= 0)
             {
                 if (showErrors)
                     MessageBox.Show("목표 용량을 올바르게 입력하세요.", "OctoConverter",
                         MessageBoxButton.OK, MessageBoxImage.Information);
                 return null;
             }
-            target = (long)(t * (TargetUnitBox.SelectedIndex == 0 ? 1024 : 1024 * 1024));
+            try
+            {
+                decimal multiplier = TargetUnitBox.SelectedIndex == 0 ? 1000m : 1000000m;
+                target = checked((long)decimal.Floor(checked(t * multiplier)));
+                if (target < 1) throw new OverflowException();
+            }
+            catch (OverflowException)
+            {
+                if (showErrors)
+                    MessageBox.Show("목표 용량은 1바이트 이상인 유효한 값이어야 합니다.", "OctoConverter",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                return null;
+            }
+        }
+
+        double fps = 0;
+        if (FpsBox.SelectedItem is ComboBoxItem fpsItem)
+        {
+            if ((string)fpsItem.Tag == "custom")
+            {
+                if (!TryParseDouble(FpsCustomBox.Text, out fps) || fps < 1 || fps > 240)
+                {
+                    if (showErrors) MessageBox.Show("직접 입력 fps는 1~240 사이의 유한한 숫자여야 합니다.", "OctoConverter",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                    return null;
+                }
+            }
+            else if (!double.TryParse((string)fpsItem.Tag, NumberStyles.Float, CultureInfo.InvariantCulture, out fps))
+                return null;
+        }
+
+        bool scaleMode = ResizeModeBox.SelectedItem is ComboBoxItem { Tag: "scale" };
+        int width = 0;
+        if (!scaleMode && WidthBox.SelectedItem is ComboBoxItem widthItem)
+        {
+            if ((string)widthItem.Tag == "custom")
+            {
+                if (!int.TryParse(WidthCustomBox.Text, NumberStyles.Integer, CultureInfo.CurrentCulture, out width) &&
+                    !int.TryParse(WidthCustomBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out width))
+                {
+                    if (showErrors) MessageBox.Show("직접 입력 너비는 2~16384 사이의 정수여야 합니다.", "OctoConverter",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                    return null;
+                }
+                if (width is < 2 or > 16384)
+                {
+                    if (showErrors) MessageBox.Show("직접 입력 너비는 2~16384 사이의 정수여야 합니다.", "OctoConverter",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                    return null;
+                }
+            }
+            else if (!int.TryParse((string)widthItem.Tag, NumberStyles.Integer, CultureInfo.InvariantCulture, out width))
+                return null;
+        }
+
+        double scalePercent = 100;
+        if (scaleMode)
+        {
+            if (!TryParseDouble(ScalePercentBox.Text, out scalePercent) || scalePercent <= 0 || scalePercent > 100)
+            {
+                if (showErrors) MessageBox.Show("비율은 0 초과 100 이하의 유한한 숫자여야 합니다.", "OctoConverter",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return null;
+            }
+            width = 0;
         }
 
         return new AnimOptions(
             (string)formatItem.Tag,
-            FpsBox.SelectedItem is ComboBoxItem f ? int.Parse((string)f.Tag) : 0,
-            WidthBox.SelectedItem is ComboBoxItem w ? int.Parse((string)w.Tag) : 0,
+            fps,
+            width,
             ColorsBox.SelectedItem is ComboBoxItem c ? int.Parse((string)c.Tag) : 256,
             DitherCheck.IsChecked == true,
             LoopBox.SelectedIndex == 0,
             (int)WebpQualitySlider.Value,
-            target);
+            target,
+            scalePercent);
     }
+
+    private static bool TryParseDouble(string text, out double value) =>
+        (double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value) ||
+         double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)) && double.IsFinite(value);
+
+    private static bool TryParseDecimal(string text, out decimal value) =>
+        decimal.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value) ||
+        decimal.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
 
     private void Option_Changed(object sender, RoutedEventArgs e)
     {
         if (!IsLoaded) return;
         UpdateVisibility();
+        if (_cts is not null) return;
         RequestEstimate();
     }
 
     private void UpdateVisibility()
     {
-        var s = ReadSettings(false);
-        if (s is null || ColorsPanel is null) return;
-        bool video = s.Ext is ".mp4" or ".webm";
-        ColorsPanel.Visibility = s.Ext == ".gif" ? Visibility.Visible : Visibility.Collapsed;
-        WebpPanel.Visibility = s.Ext == ".webp" ? Visibility.Visible : Visibility.Collapsed;
-        LoopPanel.Visibility = video ? Visibility.Collapsed : Visibility.Visible;
+        if (FpsCustomBox is not null)
+        {
+            bool customFps = FpsBox?.SelectedItem is ComboBoxItem { Tag: "custom" };
+            FpsCustomBox.Visibility = customFps ? Visibility.Visible : Visibility.Collapsed;
+            FpsCustomBox.IsEnabled = customFps;
+        }
+
+        bool customWidth = WidthBox?.SelectedItem is ComboBoxItem { Tag: "custom" };
+        bool widthMode = ResizeModeBox?.SelectedItem is ComboBoxItem { Tag: "width" };
+        if (WidthCustomBox is not null)
+        {
+            WidthCustomBox.Visibility = customWidth && widthMode ? Visibility.Visible : Visibility.Collapsed;
+            WidthCustomBox.IsEnabled = customWidth && widthMode;
+        }
+
+        bool scaleMode = ResizeModeBox?.SelectedItem is ComboBoxItem { Tag: "scale" };
+        if (ScalePercentBox is not null)
+        {
+            ScalePercentBox.Visibility = scaleMode ? Visibility.Visible : Visibility.Collapsed;
+            ScalePercentBox.IsEnabled = scaleMode;
+        }
+        if (ScalePercentLabel is not null)
+            ScalePercentLabel.Visibility = scaleMode ? Visibility.Visible : Visibility.Collapsed;
+
+        string? ext = (FormatBox?.SelectedItem as ComboBoxItem)?.Tag as string;
+        if (ColorsPanel is not null) ColorsPanel.Visibility = ext == ".gif" ? Visibility.Visible : Visibility.Collapsed;
+        if (WebpPanel is not null) WebpPanel.Visibility = ext == ".webp" ? Visibility.Visible : Visibility.Collapsed;
+        if (LoopPanel is not null)
+            LoopPanel.Visibility = ext is ".mp4" or ".webm" ? Visibility.Collapsed : Visibility.Visible;
     }
 
     // ===== 변환 =====
@@ -109,6 +207,8 @@ public partial class AnimationTab : UserControl
         }
         var s = ReadSettings(showErrors: true);
         if (s is null) return;
+
+        _estimateCts?.Cancel();
 
         string? outFolder;
         try { outFolder = Output.GetOutputFolder(); }
@@ -156,6 +256,7 @@ public partial class AnimationTab : UserControl
 
     private async void RequestEstimate()
     {
+        if (_cts is not null) return;
         _estimateCts?.Cancel();
         var cts = _estimateCts = new CancellationTokenSource();
 
@@ -169,7 +270,7 @@ public partial class AnimationTab : UserControl
         if (s.TargetBytes is long target)
         {
             EstimateText.Text =
-                $"목표 용량 모드: 파일당 {Formatters.Bytes(target)} 이하로 자동 조절합니다.";
+                $"목표 용량 모드: 파일당 {target:N0}바이트 미만 (KB=1,000바이트)으로 검증합니다.";
             return;
         }
 
@@ -196,7 +297,8 @@ public partial class AnimationTab : UserControl
     private static double EstimateBytes(MediaInfo info, AnimOptions s)
     {
         double srcW = info.Width, srcH = info.Height;
-        double w = s.Width > 0 && s.Width < srcW ? s.Width : srcW;
+        int resolvedWidth = AnimationEncoder.ResolveWidth(s, info);
+        double w = resolvedWidth > 0 ? resolvedWidth : srcW;
         double h = srcH * (w / srcW);
         double fps = s.Fps > 0 ? s.Fps : (info.Fps > 0 ? info.Fps : 15);
         double frames = fps * info.Duration;

@@ -1,236 +1,230 @@
+using System.Globalization;
 using System.IO;
 
 namespace OctoConverter.Services;
 
 public sealed record AnimOptions(
-    string Ext, int Fps, int Width, int Colors, bool Dither, bool LoopForever,
-    int WebpQuality, long? TargetBytes);
+    string Ext, double Fps, int Width, int Colors, bool Dither, bool LoopForever,
+    int WebpQuality, long? TargetBytes, double ScalePercent = 100);
 
-/// <summary>
-/// 애니메이션 변환기. 목표 용량이 지정되면 형식별 전략으로 자동 조절한다:
-///  - GIF/APNG: 크기(폭) → 프레임 순으로 반복 축소
-///  - WebP: 품질 이진 탐색, 최저 품질로도 초과하면 크기 축소로 전환
-///  - MP4/WebM: 비트레이트 계산 후 2-pass 인코딩
-/// </summary>
+/// <summary>최종 파일 크기를 검증한 뒤에만 결과 파일을 저장한다.</summary>
 public static class AnimationEncoder
 {
     public static async Task ConvertAsync(string inputPath, string outPath, AnimOptions o,
         MediaInfo? info, IProgress<double>? progress, Action<string>? note, CancellationToken ct)
     {
-        if (o.TargetBytes is long target)
+        if (o.TargetBytes is <= 0 || !double.IsFinite(o.Fps) || o.Fps < 0 || o.Fps > 240 ||
+            o.Width < 0 || o.Width == 1 || o.Width > 16384 || o.WebpQuality is < 1 or > 100 ||
+            o.Colors is < 2 or > 256 || !double.IsFinite(o.ScalePercent) || o.ScalePercent <= 0 || o.ScalePercent > 100)
+            throw new ArgumentException("프레임, 크기 또는 목표 용량 설정이 올바르지 않습니다.");
+        o = o with { Width = ResolveWidth(o, info), ScalePercent = 100 };
+        string tmp = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(outPath))!,
+            ".octoanim_" + Guid.NewGuid().ToString("N") + o.Ext);
+        try
         {
-            switch (o.Ext)
+            if (o.TargetBytes is long target)
             {
-                case ".mp4":
-                case ".webm":
-                    await EncodeVideoTargetAsync(inputPath, outPath, o, info, target, progress, ct);
-                    return;
-                case ".webp":
-                    await EncodeWebpTargetAsync(inputPath, outPath, o, info, target, progress, note, ct);
-                    return;
-                default:
-                    await EncodeScaleTargetAsync(inputPath, outPath, o, info, target, progress, note, ct);
-                    return;
+                switch (o.Ext)
+                {
+                    case ".mp4":
+                    case ".webm":
+                        await EncodeVideoTargetAsync(inputPath, tmp, o, info, target, progress, note, ct);
+                        break;
+                    case ".webp":
+                        await EncodeWebpTargetAsync(inputPath, tmp, o, info, target, progress, note, ct);
+                        break;
+                    default:
+                        await EncodeScaleTargetAsync(inputPath, tmp, o, info, target, progress, note, ct);
+                        break;
+                }
+                long size = new FileInfo(tmp).Length;
+                if (size >= target) throw TargetFailure(target, size);
+                note?.Invoke($"목표 충족: {size:N0}바이트 / {target:N0}바이트 미만");
             }
+            else
+                await FFmpegService.RunAsync(BuildArgs(inputPath, tmp, o, o.Fps, o.Width, o.WebpQuality),
+                    info?.Duration ?? 0, progress, ct);
+            ct.ThrowIfCancellationRequested();
+            File.Move(tmp, outPath); // 기존 사용자 파일을 덮어쓰지 않는다.
+            progress?.Report(100);
         }
+        finally { try { File.Delete(tmp); } catch { } }
+    }
 
-        await FFmpegService.RunAsync(
-            BuildArgs(inputPath, outPath, o, o.Fps, o.Width, o.WebpQuality),
-            info?.Duration ?? 0, progress, ct);
+    public static int ResolveWidth(AnimOptions o, MediaInfo? info)
+    {
+        if (o.Width > 0) return o.Width;
+        if (o.ScalePercent == 100) return 0;
+        if (info is not { Width: > 0 })
+            throw new InvalidOperationException("원본 너비를 알 수 없어 비율 축소를 적용할 수 없습니다.");
+        return Math.Max(2, (int)Math.Round(info.Width * o.ScalePercent / 100));
+    }
+
+    private static string Rate(double fps) => fps.ToString("0.########", CultureInfo.InvariantCulture);
+
+    // 각 재시도 진행률은 보여 주되, 실제 크기를 검증하기 전에는 100%를 보고하지 않는다.
+    private sealed class AttemptProgress(IProgress<double>? parent, double offset = 0, double scale = 1) : IProgress<double>
+    {
+        public void Report(double value) => parent?.Report(Math.Min(99, offset + value * scale));
+    }
+
+    private static List<string> Filters(double fps, int width)
+    {
+        var filters = new List<string>();
+        if (fps > 0) filters.Add($"fps={Rate(fps)}");
+        if (width > 0) filters.Add($"scale={width}:-2:flags=lanczos");
+        return filters;
     }
 
     private static string BuildArgs(string input, string output, AnimOptions o,
-        int fps, int width, int webpQuality)
+        double fps, int width, int webpQuality)
     {
-        var filters = new List<string>();
-        if (fps > 0) filters.Add($"fps={fps}");
-        if (width > 0) filters.Add($"scale={width}:-2:flags=lanczos");
+        var filters = Filters(fps, width);
         string inArg = $"-i {FFmpegService.Quote(input)}";
         string q = FFmpegService.Quote(output);
-
+        string vf = filters.Count > 0 ? $"-vf \"{string.Join(",", filters)}\" " : "";
         switch (o.Ext)
         {
             case ".gif":
-            {
-                // palettegen/paletteuse 2단계 필터로 화질 좋은 GIF 생성
                 string pre = filters.Count > 0 ? string.Join(",", filters) + "," : "";
                 string dither = o.Dither ? "sierra2_4a" : "none";
-                return $"{inArg} -filter_complex \"[0:v]{pre}split[a][b];" +
-                       $"[a]palettegen=max_colors={o.Colors}[p];[b][p]paletteuse=dither={dither}\" " +
-                       $"-loop {(o.LoopForever ? 0 : -1)} {q}";
-            }
+                return $"{inArg} -filter_complex \"[0:v:0]{pre}split[a][b];" +
+                    $"[a]palettegen=max_colors={o.Colors}[p];[b][p]paletteuse=dither={dither}\" " +
+                    $"-loop {(o.LoopForever ? 0 : -1)} {q}";
             case ".apng":
-                return $"{inArg} {Vf(filters)}-c:v apng -f apng -plays {(o.LoopForever ? 0 : 1)} {q}";
+                return $"{inArg} {vf}-an -c:v apng -f apng -plays {(o.LoopForever ? 0 : 1)} {q}";
             case ".webp":
-                return $"{inArg} {Vf(filters)}-c:v libwebp -quality {webpQuality} " +
-                       $"-loop {(o.LoopForever ? 0 : 1)} -an {q}";
-            case ".webm":
+                return $"{inArg} {vf}-c:v libwebp -quality {webpQuality} " +
+                    $"-loop {(o.LoopForever ? 0 : 1)} -an {q}";
+            default:
                 filters.Add("scale=trunc(iw/2)*2:trunc(ih/2)*2");
-                return $"{inArg} -vf \"{string.Join(",", filters)}\" " +
-                       $"-c:v libvpx-vp9 -row-mt 1 -crf 32 -b:v 0 -pix_fmt yuv420p " +
-                       $"-c:a libopus -b:a 128k {q}";
-            default: // ".mp4"
-                filters.Add("scale=trunc(iw/2)*2:trunc(ih/2)*2"); // H.264는 짝수 해상도 필요
-                return $"{inArg} -vf \"{string.Join(",", filters)}\" " +
-                       $"-c:v libx264 -preset veryfast -crf 20 -pix_fmt yuv420p " +
-                       $"-movflags +faststart -c:a aac -b:a 128k {q}";
+                string codec = o.Ext == ".webm"
+                    ? "-c:v libvpx-vp9 -row-mt 1 -crf 32 -b:v 0 -c:a libopus -b:a 128k"
+                    : "-c:v libx264 -preset veryfast -crf 20 -movflags +faststart -c:a aac -b:a 128k";
+                return $"{inArg} -vf \"{string.Join(",", filters)}\" {codec} -pix_fmt yuv420p {q}";
         }
-
-        static string Vf(List<string> filters) =>
-            filters.Count > 0 ? $"-vf \"{string.Join(",", filters)}\" " : "";
     }
-
-    // ===== MP4/WebM: 비트레이트 계산 + 2-pass =====
 
     private static async Task EncodeVideoTargetAsync(string input, string output, AnimOptions o,
-        MediaInfo? info, long target, IProgress<double>? progress, CancellationToken ct)
+        MediaInfo? info, long target, IProgress<double>? progress, Action<string>? note, CancellationToken ct)
     {
         double duration = info?.Duration ?? 0;
-        if (duration <= 0)
+        if (!double.IsFinite(duration) || duration <= 0)
             throw new InvalidOperationException("길이를 알 수 없어 목표 용량을 계산할 수 없습니다.");
-
+        // 컨테이너 여유를 남기고 오디오도 목표 예산에 맞춰 배분한다.
+        double totalKbps = target * 8.0 / 1000 / duration * 0.90;
         bool hasAudio = info?.HasAudio == true;
-        int audioKbps = hasAudio ? 128 : 0;
-        int totalKbps = (int)(target * 8.0 / 1000 / duration * 0.97);
-        int videoKbps = Math.Max(20, totalKbps - audioKbps);
-
-        var filters = new List<string>();
-        if (o.Fps > 0) filters.Add($"fps={o.Fps}");
-        if (o.Width > 0) filters.Add($"scale={o.Width}:-2:flags=lanczos");
+        int audioKbps = hasAudio ? Math.Clamp((int)(totalKbps * 0.25), 16, 128) : 0;
+        int videoKbps = (int)(totalKbps - audioKbps);
+        if (videoKbps < 8)
+            throw new InvalidOperationException("재생 길이와 오디오를 유지하기에 목표 용량이 너무 작습니다. 용량을 늘려 주세요.");
+        var filters = Filters(o.Fps, o.Width);
         filters.Add("scale=trunc(iw/2)*2:trunc(ih/2)*2");
         string vf = $"-vf \"{string.Join(",", filters)}\"";
-        string inArg = $"-i {FFmpegService.Quote(input)}";
-        string vcodec = o.Ext == ".webm"
-            ? "-c:v libvpx-vp9 -row-mt 1"
-            : "-c:v libx264 -preset veryfast";
-        string audio = !hasAudio ? "-an"
-            : o.Ext == ".webm" ? "-c:a libopus -b:a 128k" : "-c:a aac -b:a 128k";
+        string inArg = $"-i {FFmpegService.Quote(input)} -map 0:v:0";
+        string vcodec = o.Ext == ".webm" ? "-c:v libvpx-vp9 -row-mt 1" : "-c:v libx264 -preset veryfast";
         string container = o.Ext == ".mp4" ? "-movflags +faststart " : "";
-
-        var log = Path.Combine(Path.GetTempPath(), "octo2pass_" + Guid.NewGuid().ToString("N"));
-        try
+        long lastSize = 0;
+        for (int attempt = 1; attempt <= 8; attempt++)
         {
-            var pass1 = progress is null ? null : new Progress<double>(p => progress.Report(p / 2));
-            var pass2 = progress is null ? null : new Progress<double>(p => progress.Report(50 + p / 2));
-            await FFmpegService.RunAsync(
-                $"{inArg} {vcodec} -b:v {videoKbps}k -pass 1 -passlogfile {FFmpegService.Quote(log)} " +
-                $"{vf} -an -f null NUL",
-                duration, pass1, ct);
-            await FFmpegService.RunAsync(
-                $"{inArg} {vcodec} -b:v {videoKbps}k -pass 2 -passlogfile {FFmpegService.Quote(log)} " +
-                $"{vf} -pix_fmt yuv420p {container}{audio} {FFmpegService.Quote(output)}",
-                duration, pass2, ct);
+            ct.ThrowIfCancellationRequested();
+            var log = Path.Combine(Path.GetTempPath(), "octo2pass_" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                note?.Invoke($"{attempt}차 2-pass: 영상 {videoKbps}kbps · 오디오 {audioKbps}kbps");
+                await FFmpegService.RunAsync(
+                    $"{inArg} {vcodec} -b:v {videoKbps}k -pass 1 -passlogfile {FFmpegService.Quote(log)} " +
+                    $"{vf} -pix_fmt yuv420p -an -f null NUL", duration, new AttemptProgress(progress, 0, .5), ct);
+                string audio = !hasAudio ? "-an" : o.Ext == ".webm"
+                    ? $"-map 0:a:0? -c:a libopus -b:a {audioKbps}k"
+                    : $"-map 0:a:0? -c:a aac -b:a {audioKbps}k";
+                await FFmpegService.RunAsync(
+                    $"{inArg} {vcodec} -b:v {videoKbps}k -pass 2 -passlogfile {FFmpegService.Quote(log)} " +
+                    $"{vf} -pix_fmt yuv420p {container}{audio} {FFmpegService.Quote(output)}", duration, new AttemptProgress(progress, 50, .5), ct);
+            }
+            finally { CleanupPassLogs(log); }
+            lastSize = new FileInfo(output).Length;
+            if (lastSize < target) return;
+            double ratio = target * 0.90 / lastSize;
+            int nextVideo = Math.Max(8, Math.Min(videoKbps - 1, (int)(videoKbps * ratio)));
+            int nextAudio = hasAudio ? Math.Max(16, Math.Min(audioKbps, (int)(audioKbps * ratio))) : 0;
+            note?.Invoke($"{Formatters.Bytes(lastSize)}로 목표 초과 → 비트레이트 재조정");
+            if (nextVideo == videoKbps && nextAudio == audioKbps) break;
+            videoKbps = nextVideo;
+            audioKbps = nextAudio;
         }
-        finally
-        {
-            CleanupPassLogs(log);
-        }
+        throw TargetFailure(target, lastSize);
     }
-
-    // ===== GIF/APNG: 폭 → 프레임 반복 축소 =====
 
     private static async Task EncodeScaleTargetAsync(string input, string output, AnimOptions o,
         MediaInfo? info, long target, IProgress<double>? progress, Action<string>? note, CancellationToken ct)
     {
-        int width = o.Width > 0 ? o.Width : (info is { Width: > 0 } ? info.Width : 480);
-        int fps = o.Fps;
-        int[] fpsSteps = [15, 12, 10, 8, 6];
-        const int maxAttempts = 6;
-
-        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        int width = o.Width > 0 ? o.Width : info is { Width: > 0 } ? info.Width : 480;
+        int minWidth = Math.Min(width, 16);
+        double fps = o.Fps;
+        int colors = o.Colors;
+        long lastSize = 0;
+        for (int attempt = 1; attempt <= 32; attempt++)
         {
             ct.ThrowIfCancellationRequested();
-            await FFmpegService.RunAsync(
-                BuildArgs(input, output, o, fps, width, o.WebpQuality),
-                info?.Duration ?? 0, null, ct);
-            long size = new FileInfo(output).Length;
-            progress?.Report(Math.Min(attempt * 100.0 / maxAttempts, 99));
-
-            if (size <= target)
+            await FFmpegService.RunAsync(BuildArgs(input, output, o with { Colors = colors }, fps, width, o.WebpQuality),
+                info?.Duration ?? 0, new AttemptProgress(progress), ct);
+            lastSize = new FileInfo(output).Length;
+            if (lastSize < target) return;
+            if (width > minWidth)
             {
-                progress?.Report(100);
-                return;
-            }
-            if (attempt == maxAttempts)
-            {
-                note?.Invoke($"목표 초과: 최소 설정에서 {Formatters.Bytes(size)}");
-                progress?.Report(100);
-                return;
-            }
-
-            // 용량은 대략 픽셀 수에 비례 → 폭을 sqrt(비율)만큼 축소
-            double ratio = (double)target / size;
-            int newWidth = Math.Max((int)(width * Math.Sqrt(ratio) * 0.97) & ~1, 64);
-
-            if (newWidth >= width)
-            {
-                // 폭을 더 못 줄이면 프레임을 한 단계 낮춘다
-                double curFps = fps > 0 ? fps : (info is { Fps: > 0 } ? info.Fps : 15);
-                int next = fpsSteps.FirstOrDefault(f => f < curFps);
-                if (next == 0)
-                {
-                    note?.Invoke($"목표 초과: 최소 설정에서 {Formatters.Bytes(size)}");
-                    progress?.Report(100);
-                    return;
-                }
-                fps = next;
+                double factor = Math.Min(0.85, Math.Sqrt(target * 0.92 / lastSize));
+                width = Math.Max(minWidth, (int)(width * factor));
             }
             else
             {
-                width = newWidth;
+                double currentFps = fps > 0 ? fps : info is { Fps: > 0 } ? info.Fps : 15;
+                if (currentFps > 1) fps = Math.Max(1, Math.Floor(currentFps * 0.70));
+                else if (o.Ext == ".gif" && colors > 32) colors = Math.Max(32, colors / 2);
+                else break;
             }
-            note?.Invoke($"{attempt}차 {Formatters.Bytes(size)} → {width}px{(fps > 0 ? $"·{fps}fps" : "")} 재시도");
+            note?.Invoke($"{attempt}차 {Formatters.Bytes(lastSize)} → {width}px · " +
+                $"{(fps > 0 ? Rate(fps) + "fps" : "원본 fps")} 재시도");
         }
+        throw TargetFailure(target, lastSize);
     }
-
-    // ===== WebP: 품질 이진 탐색 =====
 
     private static async Task EncodeWebpTargetAsync(string input, string output, AnimOptions o,
         MediaInfo? info, long target, IProgress<double>? progress, Action<string>? note, CancellationToken ct)
     {
-        int lo = 5, hi = 100, best = -1, lastEncoded = -1;
-        int step = 0;
-        const int maxSteps = 7;
-
-        while (lo <= hi)
+        int lo = 1, hi = o.WebpQuality;
+        string bestFile = output + ".best";
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            int mid = (lo + hi) / 2;
-            await FFmpegService.RunAsync(
-                BuildArgs(input, output, o, o.Fps, o.Width, mid),
-                info?.Duration ?? 0, null, ct);
-            lastEncoded = mid;
-            long size = new FileInfo(output).Length;
-            progress?.Report(Math.Min(++step * 100.0 / maxSteps, 99));
-            note?.Invoke($"품질 {mid}: {Formatters.Bytes(size)}");
-
-            if (size <= target) { best = mid; lo = mid + 1; }
-            else hi = mid - 1;
+            while (lo <= hi)
+            {
+                int mid = (lo + hi) / 2;
+                await FFmpegService.RunAsync(BuildArgs(input, output, o, o.Fps, o.Width, mid),
+                    info?.Duration ?? 0, new AttemptProgress(progress), ct);
+                long size = new FileInfo(output).Length;
+                note?.Invoke($"품질 {mid}: {Formatters.Bytes(size)}");
+                if (size < target)
+                {
+                    File.Copy(output, bestFile, overwrite: true);
+                    lo = mid + 1;
+                }
+                else hi = mid - 1;
+            }
+            if (File.Exists(bestFile)) File.Move(bestFile, output, overwrite: true);
+            else await EncodeScaleTargetAsync(input, output, o with { WebpQuality = 1 }, info, target, progress, note, ct);
         }
-
-        if (best < 0)
-        {
-            // 최저 품질로도 초과 → 저품질 고정 후 크기 축소로 전환
-            await EncodeScaleTargetAsync(input, output, o with { WebpQuality = 30 },
-                info, target, progress, note, ct);
-            return;
-        }
-        if (best != lastEncoded)
-        {
-            await FFmpegService.RunAsync(
-                BuildArgs(input, output, o, o.Fps, o.Width, best),
-                info?.Duration ?? 0, null, ct);
-        }
-        progress?.Report(100);
+        finally { try { File.Delete(bestFile); } catch { } }
     }
+
+    private static InvalidOperationException TargetFailure(long target, long size) => new(
+        $"목표 용량을 달성하지 못했습니다 ({size:N0}바이트 / 목표 {target:N0}바이트 미만). " +
+        "초과 파일은 저장하지 않았습니다. 목표 용량을 늘려 주세요.");
 
     private static void CleanupPassLogs(string logBase)
     {
         try
         {
-            var dir = Path.GetDirectoryName(logBase)!;
-            var name = Path.GetFileName(logBase);
-            foreach (var f in Directory.EnumerateFiles(dir, name + "*"))
+            foreach (var f in Directory.EnumerateFiles(Path.GetDirectoryName(logBase)!, Path.GetFileName(logBase) + "*"))
                 try { File.Delete(f); } catch { }
         }
         catch { }

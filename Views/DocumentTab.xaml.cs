@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media.Imaging;
 using OctoConverter.Models;
 using OctoConverter.Services;
 
@@ -167,9 +168,9 @@ public partial class DocumentTab : UserControl
             item.Progress = 40;
             await Task.Run(() =>
             {
-                var jpeg = ImageCodec.Encode(src, ".jpg", s.Quality);
+                var page = BuildPage(src, s.Quality);
                 item.Progress = 75;
-                PdfWriter.WriteImagesPdf(outPath, [(jpeg, src.PixelWidth, src.PixelHeight)], s.PageMode);
+                PdfWriter.WriteImagesPdf(outPath, [page], s.PageMode);
             }, ct);
         }
         else
@@ -185,17 +186,14 @@ public partial class DocumentTab : UserControl
         foreach (var it in images) { it.Status = "대기"; it.Progress = 0; it.ResultText = ""; }
 
         var outPath = ConversionRunner.GetOutputPath(images[0].FilePath, outFolder, ".pdf");
-        var pages = new List<(byte[] Jpeg, int Width, int Height)>(images.Count);
-        int done = 0;
+        var pages = new List<PdfImage>(images.Count);
         foreach (var item in images)
         {
             ct.ThrowIfCancellationRequested();
             item.Status = "변환 중";
             var src = await ImageCodec.LoadAsync(item.FilePath, ct);
-            var jpeg = await Task.Run(() => ImageCodec.Encode(src, ".jpg", s.Quality), ct);
-            pages.Add((jpeg, src.PixelWidth, src.PixelHeight));
+            pages.Add(await Task.Run(() => BuildPage(src, s.Quality), ct));
             item.Progress = 90;
-            done++;
         }
         await Task.Run(() => PdfWriter.WriteImagesPdf(outPath, pages, s.PageMode), ct);
 
@@ -209,6 +207,18 @@ public partial class DocumentTab : UserControl
                 ? $"{Path.GetFileName(outPath)} ({Formatters.Bytes(size)})"
                 : $"→ {Path.GetFileName(outPath)} {i + 1}쪽";
         }
+    }
+
+    /// <summary>
+    /// 투명도가 있는 그림은 알파를 소프트 마스크로 붙여 투명 배경을 그대로 지킨다.
+    /// 불투명한 그림은 지금까지처럼 JPEG으로 넣는다.
+    /// </summary>
+    private static PdfImage BuildPage(BitmapSource src, int quality)
+    {
+        var bgra = ImageCodec.GetBgra(src, out int w, out int h);
+        return PdfImage.HasTransparency(bgra)
+            ? PdfImage.WithAlpha(bgra, w, h, quality)
+            : PdfImage.Opaque(ImageCodec.Encode(src, ".jpg", quality), w, h);
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => _cts?.Cancel();

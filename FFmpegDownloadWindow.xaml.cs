@@ -38,14 +38,28 @@ public partial class FFmpegDownloadWindow : Window
                 "프로그램 폴더에 넣어도 인식됩니다.",
                 "FFmpeg 설치", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-        _finished = true;
-        Close();
+        finally
+        {
+            _finished = true;
+            CancelBtn.IsEnabled = false;
+            Close();
+            _cts.Dispose();
+        }
     }
 
-    private void Cancel_Click(object sender, RoutedEventArgs e) => _cts.Cancel();
+    private void Cancel_Click(object sender, RoutedEventArgs e)
+    {
+        CancelBtn.IsEnabled = false;
+        StatusText.Text = "취소 처리 중... 현재 작업이 정리되면 창이 닫힙니다.";
+        _cts.Cancel();
+    }
 
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
-        if (!_finished) _cts.Cancel();
+        if (!_finished)
+        {
+            e.Cancel = true;
+            Cancel_Click(this, new RoutedEventArgs());
+        }
     }
 }

@@ -42,7 +42,7 @@
                     <CheckBox x:Name="MergeCheck" Content="이미지 여러 장을 하나의 PDF로 합치기" Margin="0,0,0,6"/>
                 </WrapPanel>
                 <TextBlock Margin="0,4,0,0" Foreground="{StaticResource TextSecondaryBrush}" FontSize="11"
-                           Text="Word·Excel·PowerPoint 문서는 설치된 Microsoft Office(없으면 LibreOffice)로 변환합니다. 이미지는 자체 엔진으로 바로 변환됩니다."/>
+                           Text="Word·Excel·PowerPoint 문서는 설치된 Microsoft Office(없으면 LibreOffice)로 변환합니다. 이미지는 자체 엔진으로 바로 변환되며, 투명한 배경은 PDF 안에서도 그대로 유지됩니다."/>
             </StackPanel>
         </Border>
 
