@@ -6,6 +6,7 @@
 
 [Releases](../../releases) 페이지에서 `OctoConverter-Setup-<버전>.exe`를 받아 실행하면 됩니다.
 .NET 런타임이 내장되어 있어 별도 설치가 필요 없습니다. (Windows 10/11 x64)
+설치 패키지에는 프로젝트의 MIT 라이선스 원문을 설치 폴더 루트의 `LICENSE`로 포함하고, 동봉 .NET Runtime 10.0.11의 두 런타임 패키지 `Microsoft.NETCore.App` 및 `Microsoft.WindowsDesktop.App`의 라이선스·고지 원문(WPF/Windows Forms upstream 원문 포함)을 `Licenses/dotnet-10.0.11/`에 포함합니다. 자세한 구성은 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)를 참고하세요. FFmpeg은 설치 패키지에 포함하지 않으며, 변환 기능 사용 시 앱에서 별도로 다운로드합니다.
 
 ## 탭 구성
 
@@ -78,16 +79,42 @@ OctoConverter/
 powershell -ExecutionPolicy Bypass -File installer\build-installer.ps1
 ```
 
-1. self-contained 게시 (.NET 런타임 포함 → 대상 PC에 별도 설치 불필요)
+1. self-contained 게시 (.NET Runtime 10.0.11 포함 → 대상 PC에 별도 설치 불필요; `LICENSE`는 설치 폴더 루트, 런타임 라이선스·고지 원문은 `Licenses/dotnet-10.0.11/`에 동봉)
 2. Inno Setup 컴파일 → `installer\output\OctoConverter-Setup-<버전>.exe` (버전은 csproj의 `<Version>`)
 
 관리자 권한 없이 사용자 단위로 설치되며(LocalAppData), 같은 AppId를 쓰므로 새 버전을 설치하면
 이전 버전 위에 그대로 업그레이드됩니다. v1.0.x 시절의 WiX MSI 설치본이 남아 있으면 설치 전에 자동으로 제거합니다.
 
+### 서명된 설치 파일 빌드
+
+v1.2.1부터 공개 릴리스용 설치 파일은 서명이 필수입니다. 빌드 전에 서명 도구와 자격 증명 설정을 **프로세스 환경 변수**로 지정하세요. 아래 경로는 예시이며, 각 값은 실제 외부 절대 경로로 바꿉니다.
+
+```powershell
+$env:OCTO_CODESIGN = '1'
+$env:OCTO_SIGN_PROVIDER = 'ArtifactSigning'
+$env:OCTO_SIGNTOOL = 'C:\absolute\path\to\signtool.exe'
+$env:OCTO_SIGN_DLIB = 'C:\absolute\path\to\Azure.CodeSigning.Dlib.dll'
+$env:OCTO_SIGN_METADATA = 'C:\absolute\path\to\metadata.json'
+$env:PATH = 'C:\absolute\path\to\AzureCLI;' + $env:PATH
+$env:AZURE_CONFIG_DIR = 'C:\absolute\path\to\azure-config'
+
+& .\installer\build-installer.ps1 -SkipWebsite -RequireSignedRelease
+```
+
+`OCTO_SIGNTOOL`, `OCTO_SIGN_DLIB`, `OCTO_SIGN_METADATA`, Azure CLI 경로와 `AZURE_CONFIG_DIR`은 각 PC에 준비된 외부 위치를 가리켜야 합니다. 자격 증명, 서명 metadata, 키 또는 서명 도구 파일을 저장소에 추가하지 마세요.
+
+빌드는 앱 실행 파일을 먼저 서명한 다음 Inno Setup의 signed uninstaller와 설치 파일을 서명하고 SHA-256 및 RFC 3161 timestamp를 적용합니다. 서명 단계가 실패하면 빌드를 중단합니다. 서명 대상은 OctoConverter 프로그램이며 vendor DLL과 FFmpeg 파일은 다시 서명하지 않습니다. 공개 릴리스 스크립트(`installer\release.ps1`)도 서명을 필수로 하고 `SHA256SUMS`를 업로드합니다. 서명은 SmartScreen 경고가 발생하지 않는다는 것을 보장하지 않습니다.
+
 ### 릴리즈 (원클릭)
 
 `release.bat`을 실행하면 Git 최신 커밋 기준으로 설치 파일 빌드 → GitHub 릴리스(태그 `v<버전>`) 생성 → octo-brain.com 배포 갱신까지 자동으로 진행됩니다.
 커밋되지 않은 로컬 변경은 릴리즈에 포함되지 않습니다. 옵션은 `installer\release.ps1` 머리말 참고.
+
+서명 설정을 준비한 공개 릴리스 빌드는 아래 명령으로 실행할 수 있습니다. `-SkipWebsite`은 웹사이트 배포를 건너뛰며, `-RequireSignedRelease`는 서명 없이는 릴리스 빌드를 완료하지 않습니다.
+
+```powershell
+& .\installer\build-installer.ps1 -SkipWebsite -RequireSignedRelease
+```
 
 ## 회귀 검증
 

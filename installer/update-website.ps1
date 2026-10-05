@@ -20,6 +20,15 @@ $TagPrefix = $AppName.ToLowerInvariant()
 $Tag = "$TagPrefix-v$Version"
 
 if (-not (Test-Path $InstallerPath)) { throw "설치 파일을 찾을 수 없습니다: $InstallerPath" }
+$signature = Get-AuthenticodeSignature -LiteralPath $InstallerPath
+if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) {
+    throw 'Public installer uploads require a valid Authenticode signature and verified timestamp.'
+}
+$checksumFile = Join-Path (Split-Path $InstallerPath -Parent) 'SHA256SUMS.txt'
+$expectedChecksum = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + (Split-Path $InstallerPath -Leaf)
+if (-not (Test-Path -LiteralPath $checksumFile) -or (Get-Content -LiteralPath $checksumFile -Raw).Trim() -cne $expectedChecksum) {
+    throw 'Public installer checksum file is missing or does not match.'
+}
 $installerName = Split-Path $InstallerPath -Leaf
 $sizeMB = [math]::Round((Get-Item $InstallerPath).Length / 1MB)
 
@@ -44,12 +53,12 @@ $existingTags = @(& $gh release list -R $SiteRepo --limit 200 --json tagName --j
 if ($LASTEXITCODE -ne 0) { throw "웹사이트 저장소 릴리스 목록 조회 실패" }
 if ($existingTags -contains $Tag) {
     Write-Host "[1/3] 릴리스 $Tag 존재 → 설치 파일 교체 업로드" -ForegroundColor Yellow
-    & $gh release upload $Tag $InstallerPath -R $SiteRepo --clobber
+    & $gh release upload $Tag $InstallerPath $checksumFile -R $SiteRepo --clobber
     if ($LASTEXITCODE -ne 0) { throw "릴리스 자산 업로드 실패" }
-    & $gh release edit $Tag -R $SiteRepo --notes-file $NotesFile --latest | Out-Null
+    & $gh release edit $Tag -R $SiteRepo --notes-file $NotesFile --latest=false | Out-Null
 } else {
     Write-Host "[1/3] 릴리스 $Tag 생성 + 설치 파일 업로드" -ForegroundColor Yellow
-    & $gh release create $Tag $InstallerPath -R $SiteRepo --title "$AppName $Version" --notes-file $NotesFile --latest
+    & $gh release create $Tag $InstallerPath $checksumFile -R $SiteRepo --title "$AppName $Version" --notes-file $NotesFile --latest=false
     if ($LASTEXITCODE -ne 0) { throw "릴리스 생성 실패" }
 }
 

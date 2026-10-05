@@ -1,4 +1,13 @@
-# OctoConverter 1.2.0
+# OctoConverter 1.2.1
+
+- 기능 변경 없이 공개 설치 파일의 코드 서명과 SHA256SUMS 배포를 필수화하는 서명 패치입니다. 앱 실행 파일, Inno Setup uninstaller 및 installer에 서명과 RFC 3161 timestamp를 적용하며, 서명 실패 시 빌드를 중단합니다. vendor DLL과 FFmpeg는 재서명하지 않습니다.
+- 서명은 SmartScreen 경고가 표시되지 않는다고 보장하지 않습니다.
+- 검증: 회귀 검사 32개 통과. 앱·설치 EXE·설치된 제거 EXE의 게시자 '옥토브레인', Authenticode Valid 및 검증된 Microsoft timestamp를 확인했습니다. 같은 PC의 격리된 현재 사용자 설치 경로에서 1.2.0 → 1.2.1 업그레이드 후 설정·데이터 해시 유지, 앱 시작·정상 종료, 제거 성공을 확인했습니다. 실제 설치 파일의 LICENSE 및 런타임 고지도 원문 해시로 검증했습니다. 기존 PC의 설치본은 바뀌지 않았으며, 검사를 위해 별도 보관한 기존 FFmpeg 파일도 해시가 동일하게 복구됐습니다.
+- 공개 빌드의 서명 설정 누락, 라이선스 파일 누락/런타임 버전 불일치, 홈페이지 업로드의 미서명 파일 및 잘못된 체크섬은 배포 전에 차단되는 것을 확인했습니다. 클린 VM, 관리자 단위 업그레이드, SmartScreen 평판은 검사하지 않았습니다. 제거 시 설정·외부 도구를 삭제하는 기존 동작은 그대로입니다.
+- 기존 미서명 1.2.0 릴리스는 보존하고 새로운 1.2.1 릴리스로 배포합니다.
+- 패키지에는 프로젝트 MIT 원문을 설치 폴더 루트 `LICENSE`로 포함하고, .NET Runtime 10.0.11의 `Microsoft.NETCore.App` 및 `Microsoft.WindowsDesktop.App`과 WPF/Windows Forms upstream 라이선스·고지 원문을 `Licenses/dotnet-10.0.11/`에 포함합니다. FFmpeg은 패키지 외부에서 별도 다운로드합니다.
+
+## OctoConverter 1.2.0
 
 - 애니메이션 목표 용량 변환을 GIF·APNG·WebP·MP4·WebM 전체에 적용했습니다. 실제 파일 크기가 목표보다 작을 때만 성공 처리하며, 재시도 한도를 넘기면 오류로 끝내고 출력 파일을 남기지 않습니다.
 - MP4·WebM은 실제 크기에 맞춰 비디오 비트레이트와 오디오 용량 배분을 조정하면서 전체 재생 시간을 유지합니다.
